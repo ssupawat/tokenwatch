@@ -29,17 +29,6 @@ jobs:
       - name: Prepare build assets
         run: cp assets/appicon.png build/appicon.png
 
-      - name: Fix missing platform taskfiles
-        run: |
-          for platform in ios linux windows android; do
-            mkdir -p build/$platform
-            echo "version: '3'" > build/$platform/Taskfile.yml
-            echo "tasks:" >> build/$platform/Taskfile.yml
-            echo "  build:" >> build/$platform/Taskfile.yml
-            echo "    cmds:" >> build/$platform/Taskfile.yml
-            echo "      - echo \"$platform build not configured\"" >> build/$platform/Taskfile.yml
-          done
-
       - name: Build
         run: wails3 build
 
