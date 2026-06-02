@@ -51,6 +51,16 @@ func init() {
 	application.RegisterEvent[AllUsage]("usage")
 }
 
+// tmuxPath ensures we find tmux even when launched from macOS GUI (no shell PATH)
+var tmuxPath = func() string {
+	for _, p := range []string{"/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "tmux" // fallback to PATH lookup
+}()
+
 // ── DoToken service (bound to frontend) ─────────────────
 
 type DoToken struct{}
@@ -70,7 +80,7 @@ func getConfigPath() string {
 func (t *DoToken) SaveSettings(zaiToken, claudeSession, openCodeCookie string) (string, error) {
 	var warning string
 	if claudeSession != "" {
-		if err := exec.Command("tmux", "has-session", "-t", claudeSession).Run(); err != nil {
+		if err := exec.Command(tmuxPath, "has-session", "-t", claudeSession).Run(); err != nil {
 			warning = fmt.Sprintf("tmux session '%s' not found. Run: tmux new-session -d -s %s \"claude\"", claudeSession, claudeSession)
 		}
 	}
@@ -158,7 +168,7 @@ func refreshUsage() {
 		json.Unmarshal(data, &cfg)
 	}
 	if cfg.ClaudeSession != "" {
-		sessionAlive := exec.Command("tmux", "has-session", "-t", cfg.ClaudeSession).Run() == nil
+		sessionAlive := exec.Command(tmuxPath, "has-session", "-t", cfg.ClaudeSession).Run() == nil
 		if sessionAlive {
 			hasClaudeCache := false
 			for _, p := range cachedUsage.Providers {
@@ -228,6 +238,22 @@ func (t *DoToken) StartPolling() {}
 
 // ── Claude (tmux /usage) ──────────────────────────────────
 
+func claudeRunningInSession(sessionName string) bool {
+	// Get the pane PID of the first pane in the session
+	out, err := exec.Command(tmuxPath, "list-panes", "-t", sessionName, "-F", "#{pane_pid}").Output()
+	if err != nil {
+		return false
+	}
+	pid := strings.TrimSpace(string(out))
+	if pid == "" {
+		return false
+	}
+
+	// Use pgrep to find any 'claude' descendant of the pane's shell
+	out, err = exec.Command("pgrep", "-P", pid, "claude").Output()
+	return err == nil
+}
+
 func fetchClaudeUsage() *ProviderUsage {
 	sessionName := (&DoToken{}).GetSettings().ClaudeSession
 	if sessionName == "" {
@@ -235,31 +261,36 @@ func fetchClaudeUsage() *ProviderUsage {
 	}
 
 	// Verify the session is alive
-	if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err != nil {
+	if err := exec.Command(tmuxPath, "has-session", "-t", sessionName).Run(); err != nil {
+		return nil
+	}
+
+	// Verify Claude Code is running inside the session
+	if !claudeRunningInSession(sessionName) {
 		return nil
 	}
 
 	// 1. Dismiss satisfaction survey if present
-	out, _ := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p").Output()
+	out, _ := exec.Command(tmuxPath, "capture-pane", "-t", sessionName, "-p").Output()
 	if strings.Contains(string(out), "How is Claude") {
-		exec.Command("tmux", "send-keys", "-t", sessionName, "0").Run()
+		exec.Command(tmuxPath, "send-keys", "-t", sessionName, "0").Run()
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	// 2. Try /usage up to 2 times (handles dismissed case)
 	var output string
 	for attempt := 0; attempt < 2; attempt++ {
-		exec.Command("tmux", "send-keys", "-t", sessionName, "Escape").Run()
+		exec.Command(tmuxPath, "send-keys", "-t", sessionName, "Escape").Run()
 		time.Sleep(100 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", sessionName, "C-u").Run()
+		exec.Command(tmuxPath, "send-keys", "-t", sessionName, "C-u").Run()
 		time.Sleep(100 * time.Millisecond)
-		exec.Command("tmux", "clear-history", "-t", sessionName).Run()
+		exec.Command(tmuxPath, "clear-history", "-t", sessionName).Run()
 
-		exec.Command("tmux", "send-keys", "-t", sessionName, "/usage", "Enter").Run()
+		exec.Command(tmuxPath, "send-keys", "-t", sessionName, "/usage", "Enter").Run()
 
 		for i := 0; i < 10; i++ {
 			time.Sleep(500 * time.Millisecond)
-			out, err := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p").Output()
+			out, err := exec.Command(tmuxPath, "capture-pane", "-t", sessionName, "-p").Output()
 			if err != nil {
 				continue
 			}
@@ -279,7 +310,7 @@ func fetchClaudeUsage() *ProviderUsage {
 			}
 		}
 
-		exec.Command("tmux", "send-keys", "-t", sessionName, "Escape").Run()
+		exec.Command(tmuxPath, "send-keys", "-t", sessionName, "Escape").Run()
 		time.Sleep(100 * time.Millisecond)
 
 		if strings.Contains(output, "% used") {
