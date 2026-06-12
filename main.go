@@ -637,7 +637,7 @@ func main() {
 	// System tray
 	tray := app.SystemTray.New()
 
-	tray.SetIcon(iconData)
+	tray.SetTemplateIcon(iconData)
 
 	tray.AttachWindow(appWindow).WindowOffset(5)
 
