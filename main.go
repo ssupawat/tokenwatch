@@ -523,7 +523,7 @@ func fetchZaiUsage() *ProviderUsage {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", "https://z.ai/api/monitor/usage/quota/limit", nil)
+	req, err := http.NewRequest("GET", "https://api.z.ai/api/monitor/usage/quota/limit", nil)
 	if err != nil {
 		return nil
 	}
